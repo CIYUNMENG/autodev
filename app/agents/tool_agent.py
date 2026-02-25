@@ -1,10 +1,11 @@
-"""单文件代码生成 - 基于 FilePlan 生成，支持并发"""
+"""工具 Agent - 按 FilePlan 生成代码，供主 Agent / Orchestrator 调用（非 MCP 工具）"""
 import json
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Callable
 
+from app.agents.base import ToolAgentBase
 from app.framework_constraints import (
     FRAMEWORK_CONSTRAINTS,
     get_constraints_for_frameworks,
@@ -20,8 +21,6 @@ logger = logging.getLogger(__name__)
 
 def _infer_frameworks(planning: PlanningOutput) -> list[str]:
     """当 planning.frameworks_used 为空时，从 file_plans 的 path/purpose/classes 推断使用的框架。"""
-    keys_lower = {k.lower(): k for k in FRAMEWORK_CONSTRAINTS}
-    # 关键词 -> 框架 key（小写匹配）
     keywords: list[tuple[str, str]] = [
         ("pyqt5", "PyQt5"),
         ("pyqt6", "PyQt6"),
@@ -42,6 +41,7 @@ def _infer_frameworks(planning: PlanningOutput) -> list[str]:
         if fw in FRAMEWORK_CONSTRAINTS and kw in combined and fw not in found:
             found.add(fw)
     return list(found)
+
 
 SINGLE_FILE_PROMPT = """你是一个专业的软件工程师。根据需求、规划和当前文件的规划，生成该文件的完整代码。
 
@@ -80,14 +80,8 @@ SINGLE_FILE_PROMPT = """你是一个专业的软件工程师。根据需求、�
 def _topological_levels(file_plans: list[FilePlan]) -> list[list[str]]:
     """按依赖关系分层，每层内可并行"""
     path_to_plan = {fp.path: fp for fp in file_plans}
-    in_degree: dict[str, int] = {fp.path: 0 for fp in file_plans}
-    for fp in file_plans:
-        for dep in fp.dependencies:
-            if dep in path_to_plan:
-                in_degree[fp.path] = in_degree.get(fp.path, 0) + 1
-    # 反转：in_degree 实际应为「未满足的依赖数」
-    levels: list[list[str]] = []
     remaining = set(path_to_plan.keys())
+    levels: list[list[str]] = []
     while remaining:
         level = [
             p for p in remaining
@@ -100,10 +94,15 @@ def _topological_levels(file_plans: list[FilePlan]) -> list[list[str]]:
     return levels
 
 
-class FileCodegenAgent:
-    """按 FilePlan 单文件生成代码，支持并发"""
+class CodegenToolAgent(ToolAgentBase):
+    """
+    代码生成工具 Agent：按 FilePlan 生成代码，支持并发。
+    供 Orchestrator 调用，内部组件，不是 MCP 工具。
+    MCP 工具是 generate_project、get_progress，由 mcp_server 暴露。
+    """
 
     def __init__(self, llm: LLMClient, fs_tool: FileSystemTool):
+        super().__init__()
         self.llm = llm
         self.fs = fs_tool
 
@@ -116,7 +115,6 @@ class FileCodegenAgent:
         stages_dir: Path | None = None,
     ) -> tuple[str, str]:
         """生成单个文件，返回 (path, content)，失败则 raise"""
-        # 构建已有文件上下文（仅依赖文件）
         context_parts = []
         for dep in fp.dependencies:
             if dep in existing_contents:
@@ -144,7 +142,7 @@ class FileCodegenAgent:
             framework_constraints=framework_constraints,
         )
 
-        logger.info("开始生成文件: %s", fp.path)
+        logger.info("CodegenToolAgent 生成文件: %s", fp.path)
         raw = self.llm.chat(
             messages=[{"role": "user", "content": prompt}],
             response_format=None,

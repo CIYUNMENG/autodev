@@ -46,12 +46,3 @@ def save_codegen_stage(stages_dir: Path, file_path: str, prompt: str, output: st
     (stages_dir / f"codegen_{safe}_output.txt").write_text(output, encoding="utf-8")
     logger.info("已保存代码生成阶段: %s -> %s", file_path, stages_dir)
 
-
-def save_legacy_codegen_stage(stages_dir: Path, prompt: str, output: str) -> None:
-    """保存整体代码生成（legacy）的输入和输出"""
-    if not stages_dir:
-        return
-    stages_dir.mkdir(parents=True, exist_ok=True)
-    (stages_dir / "codegen_legacy_input.txt").write_text(prompt, encoding="utf-8")
-    (stages_dir / "codegen_legacy_output.txt").write_text(output, encoding="utf-8")
-    logger.info("已保存整体代码生成阶段: %s", stages_dir)

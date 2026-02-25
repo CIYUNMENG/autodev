@@ -1,20 +1,60 @@
-"""聊天式需求收集 API"""
+"""聊天 API：AI 自主决策是否调用工具（confirm_requirement、get_progress），生成由用户点击卡片触发"""
 import json
-import threading
-import uuid
+from datetime import datetime
 
 from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 
-from app.agents import RequirementAgent
-from app.agents.requirement import REQUIREMENT_PROMPT
-from app.chat_store import ChatSession, ChatMessage, create_session, get_session, update_session
+from app.agent_tools import CHAT_TOOL_NAMES, run as tool_run, to_openai_tools
+from app.chat_store import (
+    ChatSession,
+    ChatMessage,
+    create_session,
+    get_session,
+    update_session,
+    persist_session,
+    list_sessions,
+)
 from app.llm import LLMClient
-from app.orchestrator import Orchestrator
-from app.schemas.state import TaskPhase, TaskState
-from app.task_store import get_task, set_task
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
+
+
+@router.get("/sessions")
+def chat_list_sessions():
+    """列出所有聊天会话，按更新时间降序，供侧边栏展示"""
+    return {"sessions": list_sessions()}
+
+
+@router.get("/session/{session_id}")
+def chat_get_session(session_id: str):
+    """获取指定会话的完整内容（含消息），用于切换会话时加载"""
+    session = get_session(session_id)
+    if not session:
+        return {"error": "会话不存在或已过期"}
+    return {
+        "session_id": session.session_id,
+        "messages": [{"role": m.role, "content": m.content} for m in session.messages],
+        "topic_full": session.topic_full,
+        "requirement": session.requirement,
+        "task_id": session.task_id,
+    }
+
+def _build_system_prompt() -> str:
+    """聊天专用系统提示：AI 只调用 confirm_requirement 与 get_progress，不调用 generate_project"""
+    tools = to_openai_tools(CHAT_TOOL_NAMES)
+    tool_desc = ", ".join(t["function"]["name"] for t in tools)
+    return f"""你是一个友好的 AI 助手，可以自然对话，也可以帮用户完成项目生成等任务。
+你拥有工具（{tool_desc}），请根据用户意图自行判断是否调用。工具的具体名称、参数、说明由 API 提供。
+
+**重要：需求确认与生成分离**
+- 你**不能**直接触发生成。生成由用户在需求卡片上点击「生成」按钮触发。
+- 当用户想创建/生成项目时，先追问项目类型（桌面应用/Web/命令行）、编程语言、核心功能等，待用户补充完整。
+- 当用户已提供较完整描述（如「Python 桌面科学计算器，支持三角函数」）或明确说「可以了」「需求就这些」时，调用 **confirm_requirement**，将 topic 设为对话中积累的完整需求。调用成功后，用户会收到一张需求卡片，可在卡片上点击「生成」。
+- 若用户只说「帮我做一个xxx」等模糊描述，**不要**调用 confirm_requirement，先追问细节。
+
+当用户询问某任务的进度时，调用 get_progress，task_id 从对话中获取。
+若用户只是闲聊或提问，直接回复即可。"""
 
 
 def _build_topic_from_messages(messages: list[ChatMessage]) -> str:
@@ -25,16 +65,53 @@ def _build_topic_from_messages(messages: list[ChatMessage]) -> str:
     return "\n\n补充说明：".join(parts) if len(parts) > 1 else (parts[0] if parts else "")
 
 
-def _run_and_store(task_id: str, topic: str, requirement: dict | None = None) -> None:
-    try:
-        def on_update(s: TaskState) -> None:
-            set_task(task_id, s)
+def _run_tool_call_loop(session: ChatSession, session_id: str, tools: list) -> tuple[str, dict | None]:
+    """
+    执行 LLM + tool calling 循环，返回 (文本回复, requirement_card 数据或 None)。
+    当 confirm_requirement 成功时，返回 (reply, {session_id, requirement})。
+    """
+    llm = LLMClient()
+    if not llm.is_available:
+        return "LLM 未配置，请在 .env 中设置 OPENAI_API_KEY 或 ARK_API_KEY。", None
 
-        state = Orchestrator().run(topic, on_state_update=on_update, requirement=requirement)
-        set_task(task_id, state)
-    except Exception:
-        import traceback
-        traceback.print_exc()
+    messages = [{"role": "system", "content": _build_system_prompt()}]
+    for m in session.messages:
+        messages.append({"role": m.role, "content": m.content})
+
+    requirement_card: dict | None = None
+    max_rounds = 10
+    for _ in range(max_rounds):
+        content, tool_calls = llm.chat_with_tools(messages, tools, temperature=0.7)
+        if tool_calls:
+            assistant_msg = {"role": "assistant", "content": content or ""}
+            assistant_msg["tool_calls"] = [
+                {"id": tc["id"], "type": "function", "function": {"name": tc["name"], "arguments": json.dumps(tc["arguments"], ensure_ascii=False)}}
+                for tc in tool_calls
+            ]
+            messages.append(assistant_msg)
+            for tc in tool_calls:
+                name = tc["name"]
+                args = tc.get("arguments") or {}
+                args["session_id"] = session_id
+                result = tool_run(name, **args)
+                if name == "confirm_requirement" and result.ok and result.data:
+                    requirement_card = {
+                        "session_id": result.data.get("session_id", session_id),
+                        "requirement": result.data.get("requirement"),
+                    }
+                def _json_default(o):
+                    if isinstance(o, datetime):
+                        return o.isoformat()
+                    raise TypeError(f"Object of type {type(o).__name__} is not JSON serializable")
+                result_str = json.dumps(
+                    {"ok": result.ok, "data": result.data, "error": result.error},
+                    ensure_ascii=False,
+                    default=_json_default,
+                )
+                messages.append({"role": "tool", "tool_call_id": tc["id"], "content": result_str})
+        else:
+            return content or "（无回复）", requirement_card
+    return "处理超时，请重试。", requirement_card
 
 
 async def _parse_json_utf8(request: Request) -> dict:
@@ -49,8 +126,7 @@ async def _parse_json_utf8(request: Request) -> dict:
 @router.post("/message")
 async def chat_message(request: Request):
     """
-    发送消息，进行需求分析。
-    若需求不充分，返回缺失信息提示，用户可继续补充。
+    发送消息。AI 自主决策：普通对话或调用工具（generate_project、get_progress 等）。
     """
     data = await _parse_json_utf8(request)
     message = (data.get("message") or "").strip()
@@ -65,55 +141,26 @@ async def chat_message(request: Request):
         session_id = session.session_id
 
     session.messages.append(ChatMessage(role="user", content=message))
-    topic = _build_topic_from_messages(session.messages)
+    session.topic_full = _build_topic_from_messages(session.messages)
+    persist_session(session_id)
 
     try:
-        llm = LLMClient()
-        if not llm.is_available:
-            return {
-                "error": "LLM 未配置，请在 .env 中设置 OPENAI_API_KEY 或 ARK_API_KEY",
-                "session_id": session_id,
-            }
-        req_agent = RequirementAgent(llm)
-        requirement = req_agent.analyze(topic)
+        tools = to_openai_tools(CHAT_TOOL_NAMES)
+        reply, requirement_card = _run_tool_call_loop(session, session_id, tools)
+        session.messages.append(ChatMessage(role="assistant", content=reply))
+        persist_session(session_id)
+        out = {"session_id": session_id, "reply": reply}
+        if requirement_card:
+            out["requirement_card"] = requirement_card
+        return out
     except Exception as e:
         import traceback
         traceback.print_exc()
         return {
-            "error": f"需求分析失败: {e}",
+            "error": str(e),
             "session_id": session_id,
-            "reply": f"抱歉，分析时出错：{e}",
+            "reply": f"抱歉，处理时出错：{e}",
         }
-
-    session.topic_full = topic
-    session.requirement = requirement.model_dump()
-    session.is_sufficient = requirement.is_sufficient
-
-    if not requirement.is_sufficient:
-        parts = ["需求分析显示信息不足，请补充以下内容："]
-        if requirement.missing_info:
-            parts.append("\n- " + "\n- ".join(requirement.missing_info))
-        if requirement.assumptions:
-            parts.append("\n\n当前假设：\n- " + "\n- ".join(requirement.assumptions))
-        reply = "".join(parts)
-    else:
-        summary = [
-            f"项目类型：{requirement.project_type}",
-            f"编程语言：{requirement.programming_language}",
-            f"目标用户：{requirement.target_users}",
-            f"核心功能：{', '.join(requirement.core_features[:5])}{'...' if len(requirement.core_features) > 5 else ''}",
-        ]
-        reply = "需求已明确！\n\n" + "\n".join(summary) + "\n\n可以点击「开始生成」创建项目。"
-
-    session.messages.append(ChatMessage(role="assistant", content=reply))
-
-    return {
-        "session_id": session_id,
-        "reply": reply,
-        "is_sufficient": requirement.is_sufficient,
-        "missing_info": requirement.missing_info,
-        "requirement": session.requirement,
-    }
 
 
 def _sse_event(event: str, data: str | dict) -> str:
@@ -127,77 +174,32 @@ def _stream_message_gen(
     message: str,
     session_id: str,
 ):
-    """流式消息生成器（同步）：先 yield 文本块，结束时 yield done 事件。FastAPI 会在线程池中运行。"""
+    """流式消息生成器（同步）：AI 决策是否调用工具，完成后流式输出最终回复。
+    当 confirm_requirement 成功时，额外发送 requirement_card 事件。"""
     session: ChatSession | None = get_session(session_id) if session_id else None
     if not session:
         session = create_session()
         session_id = session.session_id
 
     session.messages.append(ChatMessage(role="user", content=message))
-    topic = _build_topic_from_messages(session.messages)
-    prompt = REQUIREMENT_PROMPT.format(topic=topic)
-    buffer: list[str] = []
+    session.topic_full = _build_topic_from_messages(session.messages)
+    persist_session(session_id)
 
     try:
-        llm = LLMClient()
-        if not llm.is_available:
-            yield _sse_event("error", {"error": "LLM 未配置"})
-            return
-
-        for chunk in llm.chat_stream(
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.3,
-        ):
-            buffer.append(chunk)
-            yield _sse_event("chunk", {"text": chunk})
-
-        raw_text = "".join(buffer)
-        raw = json.loads(raw_text)
-        requirement = RequirementAgent.parse_raw(raw)
-
-        session.topic_full = topic
-        session.requirement = requirement.model_dump()
-        session.is_sufficient = requirement.is_sufficient
-
-        if not requirement.is_sufficient:
-            parts = ["需求分析显示信息不足，请补充以下内容："]
-            if requirement.missing_info:
-                parts.append("\n- " + "\n- ".join(requirement.missing_info))
-            if requirement.assumptions:
-                parts.append("\n\n当前假设：\n- " + "\n- ".join(requirement.assumptions))
-            reply = "".join(parts)
-        else:
-            summary = [
-                f"项目类型：{requirement.project_type}",
-                f"编程语言：{requirement.programming_language}",
-                f"目标用户：{requirement.target_users}",
-                f"核心功能：{', '.join(requirement.core_features[:5])}{'...' if len(requirement.core_features) > 5 else ''}",
-            ]
-            reply = "需求已明确！\n\n" + "\n".join(summary) + "\n\n可以点击「开始生成」创建项目。"
-
+        tools = to_openai_tools(CHAT_TOOL_NAMES)
+        reply, requirement_card = _run_tool_call_loop(session, session_id, tools)
         session.messages.append(ChatMessage(role="assistant", content=reply))
-
+        persist_session(session_id)
+        # 流式输出：按字符或小块 yield 以模拟打字效果
+        chunk_size = 2
+        for i in range(0, len(reply), chunk_size):
+            yield _sse_event("chunk", {"text": reply[i : i + chunk_size]})
+        # 若有需求卡片，先发送 requirement_card 再发送 done
+        if requirement_card:
+            yield _sse_event("requirement_card", requirement_card)
         yield _sse_event(
             "done",
-            {
-                "session_id": session_id,
-                "reply": reply,
-                "is_sufficient": requirement.is_sufficient,
-                "missing_info": requirement.missing_info,
-                "requirement": session.requirement,
-            },
-        )
-    except json.JSONDecodeError as e:
-        reply = f"解析结果失败，请重试。原始输出已展示。\n错误：{e}"
-        session.messages.append(ChatMessage(role="assistant", content=reply))
-        yield _sse_event(
-            "done",
-            {
-                "session_id": session_id,
-                "reply": reply,
-                "is_sufficient": False,
-                "error": str(e),
-            },
+            {"session_id": session_id, "reply": reply},
         )
     except Exception as e:
         import traceback
@@ -209,7 +211,7 @@ def _stream_message_gen(
 async def chat_message_stream(request: Request):
     """
     流式发送消息，使用 SSE 逐块返回 LLM 输出。
-    事件类型：chunk（文本块）、done（完成）、error（错误）。
+    事件类型：chunk（文本块）、requirement_card（需求卡片）、done（完成）、error（错误）。
     """
     data = await _parse_json_utf8(request)
     message = (data.get("message") or "").strip()
@@ -231,7 +233,7 @@ async def chat_message_stream(request: Request):
 
 @router.post("/generate")
 async def chat_generate(request: Request):
-    """基于当前会话的需求，开始生成项目（异步）"""
+    """基于当前会话的需求，开始生成项目（异步），通过工具层执行"""
     data = await _parse_json_utf8(request)
     session_id = (data.get("session_id") or "").strip()
 
@@ -246,24 +248,17 @@ async def chat_generate(request: Request):
     if not topic.strip():
         return {"error": "请先发送项目描述"}
 
-    task_id = f"task_{uuid.uuid4().hex[:12]}"
-    update_session(session_id, task_id=task_id)
-
-    # 立即注册初始状态，避免轮询时「任务不存在」
-    initial = TaskState(
-        project_id=task_id,
+    result = tool_run(
+        "generate_project",
         topic=topic.strip(),
-        phase=TaskPhase.REQUIREMENT_ANALYSIS,
+        session_id=session_id,
+        requirement=session.requirement,
+        async_mode=True,
     )
-    set_task(task_id, initial)
-
-    t = threading.Thread(
-        target=_run_and_store,
-        args=(task_id, topic.strip(), session.requirement),
-        daemon=True,
-    )
-    t.start()
-
+    if not result.ok:
+        return {"error": result.error or "生成启动失败", "session_id": session_id}
+    task_id = result.data.get("task_id")
+    update_session(session_id, task_id=task_id)
     return {
         "task_id": task_id,
         "session_id": session_id,
@@ -273,8 +268,9 @@ async def chat_generate(request: Request):
 
 @router.get("/progress/{task_id}")
 def chat_get_progress(task_id: str):
-    """查询生成进度（复用 task_store）"""
-    state = get_task(task_id)
-    if not state:
-        return {"error": "任务不存在或已完成"}
-    return state.model_dump()
+    """查询生成进度（通过工具层 task_store）"""
+    from app.agent_tools import run as tool_run
+    result = tool_run("get_progress", task_id=task_id)
+    if not result.ok:
+        return {"error": result.error}
+    return result.data

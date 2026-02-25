@@ -6,169 +6,541 @@
   <title>AutoDev Agent - 聊天式项目生成</title>
   <style>
     * { box-sizing: border-box; }
-    body {
-      font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+    :root {
+      --header-height: 56px;
+      --sidebar-width: 260px;
+      --input-height: 80px;
+      /* 深色模式（默认） */
+      --bg-body: linear-gradient(180deg, #0d1117 0%, #161b22 100%);
+      --color-text: #e6edf3;
+      --color-muted: #8b949e;
+      --color-accent: #58a6ff;
+      --bg-header: rgba(13, 17, 23, 0.95);
+      --border-color: rgba(48, 54, 61, 0.5);
+      --bg-msg-assistant: #21262d;
+      --border-msg-assistant: #30363d;
+      --bg-card: linear-gradient(135deg, #161b22 0%, #21262d 100%);
+      --bg-input: #0d1117;
+      --placeholder-color: #6e7681;
+      --bg-sidebar: rgba(13, 17, 23, 0.98);
+      --bg-btn-secondary: #21262d;
+      --bg-btn-disabled: #21262d;
+      --bg-hover: rgba(48, 54, 61, 0.4);
+      --bg-active: rgba(48, 54, 61, 0.5);
+    }
+    html[data-theme="light"] {
+      --bg-body: linear-gradient(180deg, #f6f8fa 0%, #eaeef2 100%);
+      --color-text: #1f2328;
+      --color-muted: #656d76;
+      --color-accent: #0969da;
+      --bg-header: rgba(255, 255, 255, 0.95);
+      --border-color: rgba(31, 35, 40, 0.15);
+      --bg-msg-assistant: #ffffff;
+      --border-msg-assistant: rgba(31, 35, 40, 0.15);
+      --bg-card: linear-gradient(135deg, #ffffff 0%, #f6f8fa 100%);
+      --bg-input: #ffffff;
+      --placeholder-color: #8c959f;
+      --bg-sidebar: rgba(255, 255, 255, 0.98);
+      --bg-btn-secondary: #f6f8fa;
+      --bg-btn-disabled: #f6f8fa;
+      --bg-hover: rgba(31, 35, 40, 0.06);
+      --bg-active: rgba(31, 35, 40, 0.1);
+    }
+    html, body {
       margin: 0;
-      background: #0f1419;
-      color: #e6edf3;
-      min-height: 100vh;
-      display: flex;
-      flex-direction: column;
+      height: 100%;
+      overflow: hidden;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+      background: var(--bg-body);
+      color: var(--color-text);
+      line-height: 1.6;
+    }
+    .theme-reveal-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 99999;
+      pointer-events: none;
+      --reveal-x: 50%;
+      --reveal-y: 50%;
+      --reveal-r: 0;
+      mask-image: radial-gradient(circle at var(--reveal-x) var(--reveal-y), transparent 0, transparent var(--reveal-r), black var(--reveal-r));
+      -webkit-mask-image: radial-gradient(circle at var(--reveal-x) var(--reveal-y), transparent 0, transparent var(--reveal-r), black var(--reveal-r));
+      mask-size: 100% 100%;
+      -webkit-mask-size: 100% 100%;
     }
     .header {
-      padding: 1rem 1.5rem;
-      border-bottom: 1px solid #21262d;
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      z-index: 100;
+      height: var(--header-height);
+      min-height: var(--header-height);
+      padding: 0 1.5rem;
+      box-sizing: border-box;
+      background: var(--bg-header);
+      backdrop-filter: blur(8px);
+      border-bottom: 1px solid var(--border-color);
       display: flex;
       align-items: center;
       justify-content: space-between;
-      flex-shrink: 0;
     }
     .header h1 {
       margin: 0;
-      font-size: 1.25rem;
+      font-size: 1.125rem;
       font-weight: 600;
-      color: #58a6ff;
+      color: var(--color-accent);
+      letter-spacing: -0.02em;
+    }
+    .header-links {
+      display: flex;
+      align-items: center;
+      gap: 1.25rem;
     }
     .header a {
-      color: #8b949e;
+      color: var(--color-muted);
       text-decoration: none;
       font-size: 0.875rem;
     }
-    .header a:hover { color: #58a6ff; }
+    .header a:hover { color: var(--color-accent); }
     .chat-area {
-      flex: 1;
-      overflow-y: auto;
-      padding: 1.5rem;
+      padding: 5rem 1.5rem 7rem;
+      min-height: 100vh;
+      max-width: 720px;
+      margin: 0 auto;
       display: flex;
       flex-direction: column;
-      gap: 1rem;
+      gap: 1.25rem;
     }
     .msg {
-      max-width: 85%;
-      padding: 0.75rem 1rem;
-      border-radius: 12px;
-      line-height: 1.5;
+      max-width: 88%;
+      padding: 0.875rem 1.125rem;
+      border-radius: 16px;
+      line-height: 1.6;
       white-space: pre-wrap;
       word-break: break-word;
+      font-size: 0.9375rem;
+      transition: opacity 0.2s;
     }
     .msg.user {
       align-self: flex-end;
-      background: #238636;
+      background: linear-gradient(135deg, #238636 0%, #2ea043 100%);
       color: #fff;
       border-bottom-right-radius: 4px;
+      box-shadow: 0 2px 8px rgba(35, 134, 54, 0.25);
     }
     .msg.assistant {
       align-self: flex-start;
-      background: #21262d;
-      border: 1px solid #30363d;
+      background: var(--bg-msg-assistant);
+      border: 1px solid var(--border-msg-assistant);
       border-bottom-left-radius: 4px;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
     }
     .msg.loading {
-      color: #8b949e;
+      color: var(--color-muted);
       font-style: italic;
     }
-    .input-area {
-      padding: 1rem 1.5rem;
-      border-top: 1px solid #21262d;
+    .requirement-card {
+      align-self: flex-start;
+      max-width: 88%;
+      padding: 1.25rem 1.5rem;
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      border-left: 4px solid var(--color-accent);
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    }
+    .requirement-card h4 {
+      margin: 0 0 1rem;
+      font-size: 0.9375rem;
+      font-weight: 600;
+      color: var(--color-accent);
+    }
+    .requirement-card .meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      margin-bottom: 1rem;
+    }
+    .requirement-card .meta span {
+      padding: 0.2rem 0.5rem;
+      background: var(--bg-msg-assistant);
+      border-radius: 6px;
+      font-size: 0.75rem;
+      color: var(--color-muted);
+    }
+    .requirement-card ul {
+      margin: 0 0 1.25rem;
+      padding-left: 1.25rem;
+      font-size: 0.875rem;
+      line-height: 1.7;
+    }
+    .requirement-card .card-actions {
       display: flex;
       gap: 0.5rem;
+    }
+    .input-area {
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      z-index: 100;
+      padding: 1rem 1.5rem;
+      background: var(--bg-header);
+      backdrop-filter: blur(8px);
+      border-top: 1px solid var(--border-color);
+      display: flex;
+      gap: 0.75rem;
       flex-wrap: wrap;
-      flex-shrink: 0;
+      max-width: 720px;
+      margin: 0 auto;
     }
     .input-area textarea {
       flex: 1;
-      min-width: 200px;
+      min-width: 180px;
       min-height: 44px;
       max-height: 120px;
       padding: 0.75rem 1rem;
-      border: 1px solid #30363d;
-      border-radius: 8px;
-      background: #0d1117;
-      color: #e6edf3;
+      border: 1px solid var(--border-msg-assistant);
+      border-radius: 10px;
+      background: var(--bg-input);
+      color: var(--color-text);
+      font-size: 0.9375rem;
       font: inherit;
       resize: vertical;
+      transition: border-color 0.15s, box-shadow 0.15s;
     }
     .input-area textarea:focus {
       outline: none;
-      border-color: #58a6ff;
+      border-color: var(--color-accent);
       box-shadow: 0 0 0 2px rgba(88, 166, 255, 0.2);
     }
-    .input-area textarea::placeholder { color: #6e7681; }
+    .input-area textarea::placeholder { color: var(--placeholder-color); }
     .btn {
-      padding: 0.6rem 1.2rem;
+      padding: 0.625rem 1.25rem;
       border: none;
-      border-radius: 8px;
+      border-radius: 10px;
       font: inherit;
+      font-size: 0.875rem;
       font-weight: 500;
       cursor: pointer;
-      transition: background 0.15s;
+      transition: background 0.15s, transform 0.05s;
     }
+    .btn:active { transform: scale(0.98); }
     .btn-primary {
-      background: #238636;
+      background: linear-gradient(135deg, #238636 0%, #2ea043 100%);
       color: #fff;
     }
-    .btn-primary:hover { background: #2ea043; }
+    .btn-primary:hover { background: linear-gradient(135deg, #2ea043 0%, #3fb950 100%); }
     .btn-primary:disabled {
-      background: #21262d;
-      color: #6e7681;
+      background: var(--bg-btn-disabled);
+      color: var(--color-muted);
       cursor: not-allowed;
     }
     .btn-secondary {
-      background: #21262d;
-      color: #e6edf3;
-      border: 1px solid #30363d;
+      background: var(--bg-btn-secondary);
+      color: var(--color-text);
+      border: 1px solid var(--border-msg-assistant);
     }
-    .btn-secondary:hover { background: #30363d; }
-    .btn-secondary:disabled {
-      opacity: 0.6;
-      cursor: not-allowed;
-    }
+    .btn-secondary:hover { background: var(--bg-active); }
     .progress-box {
-      margin-top: 1rem;
-      padding: 1rem;
-      background: #161b22;
-      border: 1px solid #30363d;
-      border-radius: 8px;
+      padding: 1rem 1.25rem;
+      background: var(--bg-msg-assistant);
+      border: 1px solid var(--border-msg-assistant);
+      border-radius: 10px;
+      font-size: 0.875rem;
+      line-height: 1.6;
+    }
+    .progress-box code {
+      background: var(--bg-input);
+      padding: 0.15rem 0.4rem;
+      border-radius: 4px;
+      font-size: 0.8em;
+    }
+    .progress-box a {
+      color: var(--color-accent);
+      text-decoration: none;
+    }
+    .progress-box a:hover { text-decoration: underline; }
+    .welcome {
+      text-align: center;
+      padding: 2rem 1rem;
+    }
+    .welcome .msg {
+      max-width: 100%;
+      text-align: left;
+    }
+    /* 主内容区 - 固定在 header 下方，避免整体页面向 header 下方滚动 */
+    .app-layout {
+      position: fixed;
+      top: var(--header-height);
+      left: 0;
+      right: 0;
+      bottom: 0;
+      display: flex;
+    }
+    .sidebar {
+      position: fixed;
+      left: 0;
+      top: var(--header-height);
+      bottom: 0;
+      width: var(--sidebar-width);
+      background: var(--bg-sidebar);
+      border-right: 1px solid var(--border-color);
+      display: flex;
+      flex-direction: column;
+      z-index: 90;
+      transition: transform 0.2s;
+    }
+    .sidebar.collapsed {
+      transform: translateX(-100%);
+    }
+    .sidebar-header {
+      padding: 0.875rem 1rem;
+      border-bottom: 1px solid var(--border-color);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .sidebar-header .btn-new {
+      padding: 0.5rem 1rem;
       font-size: 0.875rem;
     }
-    .progress-box a { color: #58a6ff; }
+    .sidebar-toggle {
+      background: none;
+      border: none;
+      color: var(--color-muted);
+      cursor: pointer;
+      padding: 0.5rem;
+      border-radius: 6px;
+    }
+    .sidebar-toggle:hover { color: var(--color-accent); }
+    .sidebar-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 0.5rem 0;
+    }
+    .sidebar-item {
+      display: block;
+      width: 100%;
+      padding: 0.625rem 1rem;
+      text-align: left;
+      background: none;
+      border: none;
+      border-left: 3px solid transparent;
+      color: var(--color-text);
+      font-size: 0.875rem;
+      cursor: pointer;
+      transition: background 0.15s, border-color 0.15s;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .sidebar-item:hover {
+      background: var(--bg-hover);
+    }
+    .sidebar-item.active {
+      background: var(--bg-active);
+      border-left-color: var(--color-accent);
+    }
+    .theme-toggle {
+      background: none;
+      border: none;
+      color: var(--color-muted);
+      cursor: pointer;
+      padding: 0.4rem 0.6rem;
+      border-radius: 6px;
+      font-size: 1.1rem;
+      line-height: 1;
+    }
+    .theme-toggle:hover { color: var(--color-accent); background: var(--bg-hover); }
+    .main-content {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+      margin-left: var(--sidebar-width);
+      min-height: calc(100vh - var(--header-height));
+      overflow-y: auto;
+    }
+    body.sidebar-collapsed .main-content {
+      margin-left: 0;
+    }
+    .main-content .chat-area {
+      margin: 0;
+      max-width: none;
+      padding: 1.5rem 1.5rem 7rem;
+      min-height: 0;
+    }
+    .input-area {
+      left: var(--sidebar-width);
+    }
+    body.sidebar-collapsed .input-area {
+      left: 0;
+    }
+    @media (max-width: 768px) {
+      .main-content { margin-left: 0; }
+      .input-area { left: 0; }
+    }
   </style>
 </head>
 <body>
   <header class="header">
+    <button class="sidebar-toggle" id="sidebarToggle" title="切换侧边栏" aria-label="切换侧边栏">☰</button>
     <h1>AutoDev Agent</h1>
-    <a href="/docs">API 文档</a>
+    <div class="header-links">
+      <button class="theme-toggle" id="themeToggle" title="切换白天/黑夜模式" aria-label="切换主题">🌙</button>
+      <a href="/dashboard">仪表盘</a>
+      <a href="/docs">API 文档</a>
+    </div>
   </header>
-  <main class="chat-area" id="chat"></main>
+  <div class="app-layout">
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-header">
+        <button class="btn btn-primary btn-new" id="newChat">新建聊天</button>
+        <button class="sidebar-toggle" id="sidebarClose" title="收起">×</button>
+      </div>
+      <div class="sidebar-list" id="sidebarList"></div>
+    </aside>
+    <main class="main-content">
+      <div class="chat-area" id="chat"></div>
+    </main>
+  </div>
   <div class="input-area">
-    <textarea id="input" placeholder="描述你的项目，例如：一个 Python 命令行待办工具，支持增删查改..." rows="2"></textarea>
+    <textarea id="input" placeholder="描述你的项目，例如：帮我做一个 Python 桌面计算器..." rows="2"></textarea>
     <button class="btn btn-primary" id="send">发送</button>
-    <button class="btn btn-secondary" id="generate" disabled>开始生成</button>
   </div>
 
   <script>
     const chat = document.getElementById('chat');
     const input = document.getElementById('input');
     const sendBtn = document.getElementById('send');
-    const genBtn = document.getElementById('generate');
+    const sidebar = document.getElementById('sidebar');
+    const sidebarList = document.getElementById('sidebarList');
+    const newChatBtn = document.getElementById('newChat');
+    const sidebarToggle = document.getElementById('sidebarToggle');
+    const sidebarClose = document.getElementById('sidebarClose');
 
     let sessionId = '';
-    let isSufficient = false;
     let currentTaskId = '';
     let pollTimer = null;
+
+    function updateSidebarState() {
+      document.body.classList.toggle('sidebar-collapsed', sidebar.classList.contains('collapsed'));
+    }
+    function toggleSidebar() {
+      sidebar.classList.toggle('collapsed');
+      updateSidebarState();
+    }
+    sidebarToggle?.addEventListener('click', toggleSidebar);
+    sidebarClose?.addEventListener('click', toggleSidebar);
+
+    async function fetchSessions() {
+      try {
+        const r = await fetch('/api/chat/sessions');
+        const data = await r.json();
+        const list = data.sessions || [];
+        sidebarList.innerHTML = list.map(s => `
+          <button class="sidebar-item ${s.session_id === sessionId ? 'active' : ''}" data-session-id="${s.session_id}">
+            ${escapeHtml(s.title || '新对话')}
+          </button>
+        `).join('');
+        sidebarList.querySelectorAll('.sidebar-item').forEach(btn => {
+          btn.onclick = () => loadSession(btn.dataset.sessionId);
+        });
+      } catch (e) {
+        console.error('fetch sessions:', e);
+      }
+    }
+
+    function escapeHtml(s) {
+      const div = document.createElement('div');
+      div.textContent = s;
+      return div.innerHTML;
+    }
+
+    async function loadSession(sid) {
+      sessionId = sid;
+      const url = new URL(location.href);
+      if (sid) url.searchParams.set('session', sid);
+      else url.searchParams.delete('session');
+      history.replaceState({}, '', url);
+      fetchSessions();
+      chat.innerHTML = '';
+      const mainEl = document.querySelector('.main-content');
+      if (!sid) {
+        addMsg('assistant', '你好！可以说「帮我做一个xxx」，我会先和你确认需求，然后展示需求卡片，你点击「生成」即可开始。');
+        mainEl?.scrollTo(0, 0);
+        return;
+      }
+      try {
+        const r = await fetch('/api/chat/session/' + sid);
+        const data = await r.json();
+        if (data.error) {
+          addMsg('assistant', '加载失败：' + data.error);
+          return;
+        }
+        const msgs = data.messages || [];
+        for (const m of msgs) {
+          if (m.role === 'user') addMsg('user', m.content);
+          else if (m.role === 'assistant') addMsg('assistant', m.content);
+        }
+        if (data.requirement && msgs.length) {
+          addRequirementCard(sid, data.requirement);
+        }
+        if (msgs.length === 0) {
+          addMsg('assistant', '你好！可以说「帮我做一个xxx」，我会先和你确认需求，然后展示需求卡片，你点击「生成」即可开始。');
+        }
+        requestAnimationFrame(() => {
+          if (mainEl && msgs.length > 0) mainEl.scrollTop = mainEl.scrollHeight;
+          else mainEl?.scrollTo(0, 0);
+        });
+      } catch (e) {
+        addMsg('assistant', '加载失败：' + (e.message || e));
+        mainEl?.scrollTo(0, 0);
+      }
+    }
+
+    newChatBtn?.addEventListener('click', () => loadSession(''));
 
     function addMsg(role, content, isLoading = false) {
       const div = document.createElement('div');
       div.className = 'msg ' + role + (isLoading ? ' loading' : '');
       div.textContent = content;
       chat.appendChild(div);
-      chat.scrollTop = chat.scrollHeight;
+      div.scrollIntoView({ behavior: 'auto' });
       return div;
     }
 
-    function setGenerateEnabled(enabled) {
-      genBtn.disabled = !enabled;
-      isSufficient = enabled;
+    function addRequirementCard(sessionIdVal, requirement) {
+      const card = document.createElement('div');
+      card.className = 'requirement-card';
+      const r = requirement || {};
+      const features = Array.isArray(r.core_features) ? r.core_features : [];
+      const metaItems = [
+        r.project_type && `类型：${r.project_type}`,
+        r.programming_language && `语言：${r.programming_language}`,
+        r.target_users && `用户：${r.target_users}`
+      ].filter(Boolean);
+      card.innerHTML = `
+        <h4>📋 需求摘要</h4>
+        <div class="meta">
+          ${metaItems.map(m => '<span>' + m + '</span>').join('')}
+        </div>
+        <ul>
+          ${features.map(f => '<li>' + f + '</li>').join('')}
+          ${features.length === 0 ? '<li>（无）</li>' : ''}
+        </ul>
+        <div class="card-actions">
+          <button class="btn btn-primary card-generate-btn" data-session-id="${sessionIdVal}">生成</button>
+        </div>
+      `;
+      chat.appendChild(card);
+      card.scrollIntoView({ behavior: 'auto' });
+      const btn = card.querySelector('.card-generate-btn');
+      btn.onclick = () => startGenerateFromCard(sessionIdVal, btn);
     }
 
     async function post(path, body) {
@@ -222,12 +594,20 @@
                 const obj = JSON.parse(eventData);
                 if (obj.text) msgDiv.textContent += obj.text;
               } catch (_) {}
+            } else if (eventType === 'requirement_card' && eventData) {
+              try {
+                const obj = JSON.parse(eventData);
+                sessionId = obj.session_id || sessionId;
+                if (obj.session_id && obj.requirement) {
+                  addRequirementCard(obj.session_id, obj.requirement);
+                }
+              } catch (_) {}
             } else if (eventType === 'done' && eventData) {
               try {
                 const obj = JSON.parse(eventData);
                 sessionId = obj.session_id || sessionId;
                 if (obj.reply) msgDiv.textContent = obj.reply;
-                setGenerateEnabled(!!obj.is_sufficient);
+                fetchSessions();
               } catch (_) {}
             } else if (eventType === 'error' && eventData) {
               try {
@@ -236,7 +616,7 @@
               } catch (_) { msgDiv.textContent = '错误：' + eventData; }
             }
           }
-          chat.scrollTop = chat.scrollHeight;
+          chat.lastElementChild?.scrollIntoView({ behavior: 'auto' });
         }
         if (buffer.trim()) {
           let eventType = '', eventData = '';
@@ -244,12 +624,20 @@
             if (line.startsWith('event: ')) eventType = line.slice(7).trim();
             else if (line.startsWith('data: ')) eventData = line.slice(6);
           }
-          if (eventType === 'done' && eventData) {
+          if (eventType === 'requirement_card' && eventData) {
+            try {
+              const obj = JSON.parse(eventData);
+              sessionId = obj.session_id || sessionId;
+              if (obj.session_id && obj.requirement) {
+                addRequirementCard(obj.session_id, obj.requirement);
+              }
+            } catch (_) {}
+          } else if (eventType === 'done' && eventData) {
             try {
               const obj = JSON.parse(eventData);
               sessionId = obj.session_id || sessionId;
               if (obj.reply) msgDiv.textContent = obj.reply;
-              setGenerateEnabled(!!obj.is_sufficient);
+              fetchSessions();
             } catch (_) {}
           } else if (eventType === 'error' && eventData) {
             try {
@@ -265,23 +653,30 @@
       sendBtn.disabled = false;
     }
 
-    async function startGenerate() {
-      if (!sessionId || !isSufficient) return;
-      genBtn.disabled = true;
-      genBtn.textContent = '生成中...';
+    async function startGenerateFromCard(sid, btn) {
+      if (!sid || !btn || btn.dataset.started === '1') return;
+      sessionId = sid;
+      btn.disabled = true;
+      btn.textContent = '生成中...';
       try {
-        const res = await post('/api/chat/generate', { session_id: sessionId });
+        const res = await post('/api/chat/generate', { session_id: sid });
         currentTaskId = res.task_id;
+        btn.dataset.started = '1';
+        btn.textContent = '查看任务';
+        btn.disabled = false;
+        btn.classList.remove('btn-primary');
+        btn.classList.add('btn-secondary');
+        btn.onclick = () => window.location.href = '/dashboard';
         const box = document.createElement('div');
         box.className = 'progress-box';
-        box.innerHTML = `任务 ID：<code>${res.task_id}</code><br>生成已启动，正在轮询进度...`;
+        box.innerHTML = `任务 ID：<code>${res.task_id}</code><br>生成已启动，<a href="/dashboard">前往仪表盘</a> 查看进度...`;
         chat.appendChild(box);
-        chat.scrollTop = chat.scrollHeight;
+        box.scrollIntoView({ behavior: 'auto' });
         pollProgress(box);
       } catch (e) {
         addMsg('assistant', '启动失败：' + e.message);
-        genBtn.disabled = false;
-        genBtn.textContent = '开始生成';
+        btn.disabled = false;
+        btn.textContent = '生成';
       }
     }
 
@@ -298,10 +693,8 @@
         }
         try {
           if (!state || state.error) {
-            box.innerHTML = `任务 ID：<code>${currentTaskId}</code><br>状态：${state?.error || '任务已结束或不存在'}`;
+            box.innerHTML = `任务 ID：<code>${currentTaskId}</code><br>状态：${state?.error || '任务已结束或不存在'}<br><a href="/dashboard">前往仪表盘</a>`;
             clearInterval(pollTimer);
-            genBtn.disabled = false;
-            genBtn.textContent = '开始生成';
             return;
           }
           const phase = state.phase || '';
@@ -320,26 +713,16 @@
           if (progress.current_step) html += `当前：${progress.current_step}<br>`;
           if (progress.completed_files != null && progress.total_files != null)
             html += `文件：${progress.completed_files}/${progress.total_files}<br>`;
-          if (state.output_path) {
-            html += `<br>输出目录：<code>${state.output_path}</code>`;
-          }
+          if (state.output_path) html += `<br>输出：<code>${state.output_path}</code><br>`;
           if (phase === 'completed') {
-            html += '<br><br>✓ 生成完成';
-            genBtn.disabled = false;
-            genBtn.textContent = '开始生成';
+            html += '<br>✓ 生成完成 <a href="/dashboard">前往仪表盘</a>';
             currentTaskId = '';
             clearInterval(pollTimer);
-            box.innerHTML = html;
-            return;
           }
           if (phase === 'failed') {
-            html += '<br><br>✗ 生成失败：' + (state.error_log?.[0]?.error || '未知错误');
-            genBtn.disabled = false;
-            genBtn.textContent = '开始生成';
+            html += '<br>✗ 失败：' + (state.error_log?.[0]?.error || '未知错误') + ' <a href="/dashboard">前往仪表盘</a>';
             currentTaskId = '';
             clearInterval(pollTimer);
-            box.innerHTML = html;
-            return;
           }
           box.innerHTML = html;
         } catch (e) {
@@ -351,7 +734,6 @@
     }
 
     sendBtn.onclick = sendMessage;
-    genBtn.onclick = startGenerate;
     input.onkeydown = (e) => {
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
@@ -359,7 +741,54 @@
       }
     };
 
-    addMsg('assistant', '你好！请描述你想创建的项目，我会帮你分析需求。如果信息不足，我会提示你补充。');
+    (function initTheme() {
+      const key = 'autodev-theme';
+      const theme = localStorage.getItem(key) || 'dark';
+      document.documentElement.setAttribute('data-theme', theme);
+      const themeBtn = document.getElementById('themeToggle');
+      if (themeBtn) {
+        themeBtn.textContent = theme === 'light' ? '🌙' : '☀️';
+        themeBtn.title = theme === 'light' ? '切换到黑夜模式' : '切换到白天模式';
+        themeBtn.onclick = () => {
+          const current = document.documentElement.getAttribute('data-theme') || 'dark';
+          const next = current === 'light' ? 'dark' : 'light';
+          const rect = themeBtn.getBoundingClientRect();
+          const x = rect.left + rect.width / 2;
+          const y = rect.top + rect.height / 2;
+          const maxR = Math.hypot(Math.max(x, innerWidth - x), Math.max(y, innerHeight - y)) + 50;
+          const overlay = document.createElement('div');
+          overlay.className = 'theme-reveal-overlay';
+          overlay.style.setProperty('--reveal-x', x + 'px');
+          overlay.style.setProperty('--reveal-y', y + 'px');
+          overlay.style.setProperty('--reveal-r', '0px');
+          overlay.style.background = current === 'dark' ? '#0d1117' : '#f0f3f6';
+          document.body.appendChild(overlay);
+          document.documentElement.setAttribute('data-theme', next);
+          localStorage.setItem(key, next);
+          themeBtn.textContent = next === 'light' ? '🌙' : '☀️';
+          themeBtn.title = next === 'light' ? '切换到黑夜模式' : '切换到白天模式';
+          requestAnimationFrame(() => {
+            const start = performance.now();
+            const duration = 600;
+            function tick(now) {
+              const t = Math.min((now - start) / duration, 1);
+              const eased = 1 - Math.pow(1 - t, 2);
+              overlay.style.setProperty('--reveal-r', (eased * maxR) + 'px');
+              if (t < 1) requestAnimationFrame(tick);
+              else overlay.remove();
+            }
+            requestAnimationFrame(tick);
+          });
+        };
+      }
+    })();
+
+    (function init() {
+      updateSidebarState();
+      const params = new URLSearchParams(location.search);
+      const sid = params.get('session') || '';
+      loadSession(sid);
+    })();
   </script>
 </body>
 </html>

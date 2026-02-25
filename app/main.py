@@ -21,6 +21,7 @@ from fastapi.responses import FileResponse, JSONResponse
 
 from app.api.routes import router
 from app.api.chat_routes import router as chat_router
+from app.api.tool_routes import router as tool_router
 from app.config import settings
 from app.logger import setup_file_logging
 
@@ -72,12 +73,32 @@ app.add_middleware(
 
 app.include_router(router)
 app.include_router(chat_router)
+app.include_router(tool_router)
+
+# 可选：挂载 MCP 服务（需 pip install mcp[cli]），供 Cursor/Claude 等客户端调用
+# 若出现页面一直转圈，可暂时设为 False 排除 MCP 影响
+_enable_mcp = os.environ.get("AUTODEV_ENABLE_MCP", "1") == "1"
+if _enable_mcp:
+    try:
+        from app.mcp_server import create_mcp_app
+        mcp_app = create_mcp_app()
+        if mcp_app is not None:
+            app.mount("/mcp", mcp_app)
+    except Exception as e:
+        logging.getLogger(__name__).debug("MCP 未挂载: %s", e)
 
 
 @app.get("/chat")
 def chat_page():
     """聊天式项目生成页面"""
     path = Path(__file__).parent / "static" / "chat.html"
+    return FileResponse(path, media_type="text/html; charset=utf-8")
+
+
+@app.get("/dashboard")
+def dashboard_page():
+    """任务仪表盘页面"""
+    path = Path(__file__).parent / "static" / "dashboard.html"
     return FileResponse(path, media_type="text/html; charset=utf-8")
 
 
@@ -88,5 +109,8 @@ def root():
         "version": "0.1.0",
         "docs": "/docs",
         "chat": "/chat",
+        "dashboard": "/dashboard",
         "api": "POST /api/generate  Body: {\"topic\": \"你的项目主题\"}",
+        "tools": "GET /api/tools   POST /api/tools/generate_project",
+        "mcp": "若已安装 mcp，MCP 端点: /mcp",
     }

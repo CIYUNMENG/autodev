@@ -5,10 +5,9 @@ from typing import Callable
 from datetime import datetime
 from pathlib import Path
 
-from app.agents import CodegenAgent, FileCodegenAgent, PlanningAgent, RequirementAgent
+from app.agents import RequirementPlanningToolAgent, CodegenToolAgent
 from app.llm import LLMClient
 from app.logger import log_step
-from app.config import settings
 from app.schemas.requirement import RequirementOutput
 from app.schemas.state import TaskPhase, TaskState
 from app.tools import FileSystemTool
@@ -47,10 +46,8 @@ class Orchestrator:
     def __init__(self):
         self.llm = LLMClient()
         self.fs = FileSystemTool()
-        self.requirement_agent = RequirementAgent(self.llm)
-        self.planning_agent = PlanningAgent(self.llm)
-        self.file_codegen_agent = FileCodegenAgent(self.llm, self.fs)
-        self.legacy_codegen_agent = CodegenAgent(self.llm, self.fs)
+        self.req_plan_agent = RequirementPlanningToolAgent(self.llm)
+        self.codegen_agent = CodegenToolAgent(self.llm, self.fs)
 
     def run(
         self,
@@ -80,88 +77,80 @@ class Orchestrator:
             stages_dir.mkdir(parents=True, exist_ok=True)
             logger.info("[%s] 项目目录: %s, 阶段存储: %s", project_id, project_path, stages_dir)
 
-            # Phase 1: 需求分析（若已传入 requirement 则跳过，直接进入规划）
+            # Phase 1: RequirementPlanningToolAgent（需求分析 + 规划）
             if requirement is not None:
                 requirement = RequirementOutput.model_validate(requirement) if isinstance(requirement, dict) else requirement
                 state.requirement = requirement.model_dump()
                 state.completed_steps.append("requirement_analysis")
-                # 保存已确认的需求到 _stages 便于追溯
                 from app.stages import save_requirement_stage
                 save_requirement_stage(stages_dir, f"# 聊天中已确认的需求\n\n{topic}", requirement.model_dump())
                 log_step(logger, "requirement", "使用已确认需求，跳过分析", project_id=project_id)
                 _notify()
+                if not requirement.is_sufficient:
+                    state.phase = TaskPhase.REQUIREMENT_INSUFFICIENT
+                    state.error_log.append({
+                        "step": "requirement",
+                        "error": "信息不足",
+                        "missing_info": requirement.missing_info,
+                    })
+                    state.updated_at = datetime.now()
+                    return state
+                planning = self.req_plan_agent.plan_only(requirement, stages_dir=stages_dir)
             else:
                 state.phase = TaskPhase.REQUIREMENT_ANALYSIS
                 state.updated_at = datetime.now()
-                log_step(logger, "requirement", "开始需求分析", project_id=project_id, topic=topic[:50])
-                requirement = self.requirement_agent.analyze(topic, stages_dir=stages_dir)
-                state.requirement = requirement.model_dump()
-                state.completed_steps.append("requirement_analysis")
-                log_step(logger, "requirement", "需求分析完成", project_id=project_id)
-                _notify()
+                log_step(logger, "req_plan", "RequirementPlanningToolAgent 开始", project_id=project_id, topic=topic[:50])
+                requirement, planning = self.req_plan_agent.analyze_and_plan(topic, stages_dir=stages_dir)
+                if not requirement.is_sufficient:
+                    state.phase = TaskPhase.REQUIREMENT_INSUFFICIENT
+                    state.error_log.append({
+                        "step": "requirement",
+                        "error": "信息不足",
+                        "missing_info": requirement.missing_info,
+                    })
+                    state.updated_at = datetime.now()
+                    return state
 
-            if not requirement.is_sufficient:
-                state.phase = TaskPhase.REQUIREMENT_INSUFFICIENT
-                state.error_log.append({
-                    "step": "requirement",
-                    "error": "信息不足",
-                    "missing_info": requirement.missing_info,
-                })
-                state.updated_at = datetime.now()
-                return state
-
-            # Phase 2: 规划（可配置跳过，use_planning=false 时用旧版整体生成，更快）
-            state.phase = TaskPhase.PLANNING
-            state.updated_at = datetime.now()
-            if not getattr(settings, "use_planning", True):
-                from app.schemas.planning import PlanningOutput
-                planning = PlanningOutput(architecture="legacy", file_plans=[], suggested_order=[])
-                state.planning = planning.model_dump()
-                state.progress.total_files = 0
-                log_step(logger, "planning", "跳过规划，使用整体生成", project_id=project_id)
-            else:
-                log_step(logger, "planning", "开始规划", project_id=project_id)
-                planning = self.planning_agent.plan(requirement, stages_dir=stages_dir)
-                state.planning = planning.model_dump()
-                state.progress.total_files = len(planning.file_plans)
-                log_step(logger, "planning", "规划完成", project_id=project_id, files=len(planning.file_plans))
+            state.planning = planning.model_dump()
+            state.progress.total_files = len(planning.file_plans)
+            log_step(logger, "planning", "规划完成", project_id=project_id, files=len(planning.file_plans))
             state.completed_steps.append("planning")
             _notify()
+
+            if not planning.file_plans:
+                state.phase = TaskPhase.FAILED
+                state.error_log.append({
+                    "step": "planning",
+                    "error": "规划结果为空，请重试或检查需求",
+                })
+                state.updated_at = datetime.now()
+                log_step(logger, "planning", "规划为空，任务失败", project_id=project_id)
+                return state
 
             # Phase 3: 代码生成
             state.phase = TaskPhase.CODE_GENERATION
             state.updated_at = datetime.now()
 
-            if planning.file_plans:
-                def on_progress(path: str, done: int, total: int) -> None:
-                    state.progress.current_step = path
-                    state.progress.completed_files = done
-                    state.updated_at = datetime.now()
-                    log_step(logger, "codegen", "生成进度", project_id=project_id, file=path, done=done, total=total)
-                    _notify()
+            def on_progress(path: str, done: int, total: int) -> None:
+                state.progress.current_step = path
+                state.progress.completed_files = done
+                state.updated_at = datetime.now()
+                log_step(logger, "codegen", "生成进度", project_id=project_id, file=path, done=done, total=total)
+                _notify()
 
-                created, failed = self.file_codegen_agent.generate_from_plan(
-                    project_path,
-                    requirement,
-                    planning,
-                    progress_callback=on_progress,
-                    max_workers=3,
-                    stages_dir=stages_dir,
-                )
-                state.progress.failed_files = failed
-                state.completed_steps.extend(created)
-                state.completed_steps.append("code_generation")
-                if failed:
-                    log_step(logger, "codegen", "部分失败", project_id=project_id, failed=failed)
-            else:
-                log_step(logger, "codegen", "规划为空，回退到整体生成", project_id=project_id)
-                created = self.legacy_codegen_agent.generate(
-                    project_path, requirement, stages_dir=stages_dir
-                )
-                state.completed_steps.extend(created)
-                state.completed_steps.append("code_generation")
-                state.progress.completed_files = len(created)
-                state.progress.total_files = len(created)
+            created, failed = self.codegen_agent.generate_from_plan(
+                project_path,
+                requirement,
+                planning,
+                progress_callback=on_progress,
+                max_workers=3,
+                stages_dir=stages_dir,
+            )
+            state.progress.failed_files = failed
+            state.completed_steps.extend(created)
+            state.completed_steps.append("code_generation")
+            if failed:
+                log_step(logger, "codegen", "部分失败", project_id=project_id, failed=failed)
 
             # 写入 AUTODEV_LOG
             _write_autodev_log(project_path, requirement, state)

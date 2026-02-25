@@ -1,14 +1,10 @@
-"""API 路由"""
+"""API 路由（兼容保留；内部通过工具层执行）"""
 import json
-import threading
-import uuid
 
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
 
-from app.orchestrator import Orchestrator
-from app.schemas.state import TaskState
-from app.task_store import get_task, set_task
+from app.agent_tools import run as tool_run
 
 router = APIRouter(prefix="/api", tags=["projects"])
 
@@ -34,42 +30,53 @@ async def _parse_body_utf8(request: Request) -> GenerateRequest:
     return GenerateRequest(topic=topic)
 
 
-def _run_and_store(task_id: str, topic: str) -> None:
-    try:
-        def on_update(s: TaskState) -> None:
-            set_task(task_id, s)
-
-        state = Orchestrator().run(topic, on_state_update=on_update)
-        set_task(task_id, state)
-    except Exception:
-        import traceback
-        traceback.print_exc()
-
-
-@router.post("/generate", response_model=TaskState)
+@router.post("/generate")
 async def generate_project(req: GenerateRequest = Depends(_parse_body_utf8)):
     """同步生成：阻塞直到完成，返回完整状态（含 progress）"""
-    orchestrator = Orchestrator()
-    state = orchestrator.run(req.topic.strip())
+    result = tool_run(
+        "generate_project",
+        topic=req.topic.strip(),
+        async_mode=False,
+    )
+    if not result.ok:
+        from fastapi import HTTPException
+        raise HTTPException(500, result.error or "生成失败")
+    state = result.data.get("state")
+    if not state:
+        from fastapi import HTTPException
+        raise HTTPException(500, "未返回状态")
     return state
 
 
 @router.post("/generate/async")
 async def generate_project_async(req: GenerateRequest = Depends(_parse_body_utf8)):
     """异步生成：立即返回 task_id，后台线程执行，可通过 GET /api/progress/{task_id} 轮询进度"""
-    task_id = f"task_{uuid.uuid4().hex[:12]}"
-    state = TaskState(project_id=task_id, topic=req.topic)
-    set_task(task_id, state)
-    # 使用独立线程，避免 BackgroundTasks 占用 worker 导致轮询请求被阻塞
-    t = threading.Thread(target=_run_and_store, args=(task_id, req.topic.strip()), daemon=True)
-    t.start()
+    result = tool_run(
+        "generate_project",
+        topic=req.topic.strip(),
+        async_mode=True,
+    )
+    if not result.ok:
+        from fastapi import HTTPException
+        raise HTTPException(500, result.error or "提交失败")
+    task_id = result.data.get("task_id")
     return {"task_id": task_id, "message": "任务已提交，请轮询 GET /api/progress/{task_id}"}
 
 
-@router.get("/progress/{task_id}", response_model=TaskState | None)
+@router.get("/progress/{task_id}")
 def get_progress(task_id: str):
-    """查询任务进度（用于异步生成）"""
-    return get_task(task_id)
+    """查询任务进度（用于异步生成），通过工具层"""
+    result = tool_run("get_progress", task_id=task_id)
+    if not result.ok:
+        return None
+    return result.data
+
+
+@router.get("/tasks")
+def list_tasks_api():
+    """列出所有任务，供仪表盘使用"""
+    from app.task_store import list_tasks
+    return {"tasks": list_tasks()}
 
 
 @router.get("/health")

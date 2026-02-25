@@ -155,3 +155,59 @@ class LLMClient:
             temperature=temperature,
         )
         return json.loads(content)
+
+    def chat_with_tools(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        temperature: float = 0.7,
+        max_tokens: int | None = None,
+    ) -> tuple[str | None, list[dict[str, Any]]]:
+        """
+        调用 LLM，支持 tool calling。
+        返回 (content, tool_calls)。
+        content 不为空时表示模型返回文本；tool_calls 不为空时表示模型请求调用工具。
+        """
+        if not self.is_available:
+            raise RuntimeError(
+                "LLM 未配置: 请在 .env 中设置 OPENAI_API_KEY 或 ARK_API_KEY (LLM_PROVIDER=doubao)"
+            )
+        timeout = getattr(settings, "llm_timeout", DEFAULT_LLM_TIMEOUT)
+        kwargs: dict[str, Any] = {
+            "model": self._model,
+            "messages": messages,
+            "tools": tools,
+            "temperature": temperature,
+            "timeout": timeout,
+        }
+        if max_tokens is not None:
+            kwargs["max_tokens"] = max_tokens
+        logger.info("LLM tool calling 开始 model=%s tools=%d", self._model, len(tools))
+        try:
+            response = self._client.chat.completions.create(**kwargs)
+            msg = response.choices[0].message
+            content = msg.content or None
+            if content and isinstance(content, bytes):
+                content = content.decode("utf-8", errors="replace")
+            content = str(content).strip() if content else None
+
+            tool_calls: list[dict[str, Any]] = []
+            if hasattr(msg, "tool_calls") and msg.tool_calls:
+                for tc in msg.tool_calls:
+                    if hasattr(tc, "function"):
+                        fn = tc.function
+                        name = getattr(fn, "name", "") or (fn.get("name") if isinstance(fn, dict) else "")
+                        args_str = getattr(fn, "arguments", "") or (fn.get("arguments", "") if isinstance(fn, dict) else "")
+                        try:
+                            args = json.loads(args_str) if args_str else {}
+                        except json.JSONDecodeError:
+                            args = {}
+                        tool_calls.append({
+                            "id": getattr(tc, "id", ""),
+                            "name": name,
+                            "arguments": args,
+                        })
+            return content, tool_calls
+        except Exception as e:
+            logger.exception("LLM tool calling 失败: %s", e)
+            raise

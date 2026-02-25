@@ -23,9 +23,10 @@ if sys.platform == "win32":
 import uvicorn
 
 if __name__ == "__main__":
+    # Windows 下 0.0.0.0 有时会导致首请求一直转圈，改用 127.0.0.1；需局域网访问时改为 "0.0.0.0"
     uvicorn.run(
         "app.main:app",
-        host="0.0.0.0",
+        host="127.0.0.1",
         port=8000,
         reload=True,
         reload_dirs=["app"],

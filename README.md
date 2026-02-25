@@ -1,13 +1,14 @@
 # AutoDev Agent
 
-自主软件工程生成系统 MVP —— 输入项目主题，自动完成需求分析、代码生成、项目结构创建。
+以 **AI 实时对话** 为核心的自主软件工程系统：聊天式描述项目 → 需求分析 → 代码生成；代码生成与后续能力均以**工具**形式提供，可被对话、HTTP API、MCP 统一调用。
 
 ## 功能
 
+- **对话优先**：网页聊天（`/chat`）支持流式/非流式需求分析，可多轮补充需求后一键生成
+- **工具层**：生成项目、查询进度等为注册工具，供 `/api/tools/*` 与 MCP 调用
 - **需求分析**：检查信息充分性，生成结构化需求（含 missing_info、assumptions）
-- **规划**：将需求拆分为文件级规划（类、接口、函数、设计模式、依赖）
-- **代码生成**：按 FilePlan 单文件生成，支持多线程并发
-- **日志与进度**：统一日志、`AUTODEV_LOG.md`、进度 API
+- **规划与代码生成**：按 FilePlan 单文件生成，支持多线程并发
+- **可选 MCP**：安装 `mcp[cli]` 后，MCP 端点挂载于 `/mcp`，供 Cursor/Claude 等调用
 
 ## 快速开始
 
@@ -70,6 +71,10 @@ curl "http://localhost:8000/api/progress/task_xxx"
 
 **网页聊天**：访问 http://localhost:8000/chat —— 聊天式描述项目，可实时补充需求，无编码问题
 
+**工具 API**：`GET /api/tools` 列出工具；`POST /api/tools/generate_project`、`POST /api/tools/get_progress` 调用对应工具
+
+**MCP**：安装 `mcp[cli]` 后启动服务，MCP 端点为 `http://localhost:8000/mcp`，可供 Cursor/Claude 等配置后调用
+
 **Swagger 文档**：访问 http://localhost:8000/docs
 
 ## 项目结构
@@ -77,14 +82,20 @@ curl "http://localhost:8000/api/progress/task_xxx"
 ```
 AutoDevAgent/
 ├── app/
-│   ├── main.py          # FastAPI 入口
+│   ├── main.py          # FastAPI 入口（含可选 MCP 挂载）
 │   ├── config.py        # 配置
-│   ├── orchestrator.py  # Agent 编排
-│   ├── api/             # API 路由
-│   ├── agents/          # 需求分析、代码生成 Agent
+│   ├── orchestrator.py  # Agent 编排（需求→规划→代码生成）
+│   ├── core/            # 核心抽象：Tool、ToolResult
+│   ├── agent_tools/     # 业务工具：generate_project、get_progress、注册表
+│   ├── mcp_server.py    # MCP 服务（挂载到 /mcp）
+│   ├── api/             # API 路由（chat、tools、projects 兼容）
+│   ├── agents/          # RequirementPlanningToolAgent + CodegenToolAgent
 │   ├── llm/             # LLM 客户端
 │   ├── schemas/         # Pydantic 模型
-│   └── tools/           # 文件系统工具
+│   └── tools/           # 文件系统等基础设施
+├── docs/
+│   └── TOOLS.md         # 工具层说明与新增工具步骤
+├── .cursor/skills/      # Cursor Skill：autodev-tools
 ├── generated_projects/  # 生成的项目输出目录
 ├── requirements.txt
 └── README.md

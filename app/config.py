@@ -30,7 +30,6 @@ class Settings(BaseSettings):
     log_dir: Path = Path("./logs")  # 日志文件目录，便于排查问题
     log_level: str = "INFO"
     llm_timeout: int = 120  # LLM 请求超时秒数
-    use_planning: bool = True  # False 时跳过规划，使用旧版整体生成（更快）
 
 
 settings = Settings()
