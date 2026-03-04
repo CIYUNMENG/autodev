@@ -9,6 +9,8 @@
 - **需求分析**：检查信息充分性，生成结构化需求（含 missing_info、assumptions）
 - **规划与代码生成**：按 FilePlan 单文件生成，支持多线程并发
 - **可选 MCP**：安装 `mcp[cli]` 后，MCP 端点挂载于 `/mcp`，供 Cursor/Claude 等调用
+- **Skills**：支持 ClawHub/Cursor 格式，将 skill 放入 `skills/` 目录即可加载，详见 `docs/SKILLS.md`
+- **LiteLLM + LangChain**：LLM 层基于 LiteLLM（支持 100+ 模型），LangChain 供编排、记忆、RAG 等扩展，详见 `docs/LLM.md`
 
 ## 快速开始
 
@@ -94,7 +96,9 @@ AutoDevAgent/
 │   ├── schemas/         # Pydantic 模型
 │   └── tools/           # 文件系统等基础设施
 ├── docs/
-│   └── TOOLS.md         # 工具层说明与新增工具步骤
+│   ├── TOOLS.md         # 工具层说明与新增工具步骤
+│   └── SKILLS.md        # Skills 使用说明（ClawHub/Cursor 格式）
+├── skills/              # 可加载的 skills（ClawHub/Cursor 格式）
 ├── .cursor/skills/      # Cursor Skill：autodev-tools
 ├── generated_projects/  # 生成的项目输出目录
 ├── requirements.txt
@@ -106,7 +110,8 @@ AutoDevAgent/
 - Python 3.10+
 - FastAPI
 - Pydantic
-- OpenAI API（或兼容接口）
+- LiteLLM（统一 LLM 接入）
+- LangChain（编排、记忆、RAG）
 
 ## 版本
 

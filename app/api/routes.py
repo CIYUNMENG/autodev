@@ -1,4 +1,5 @@
 """API 路由（兼容保留；内部通过工具层执行）"""
+import asyncio
 import json
 
 from fastapi import APIRouter, Depends, Request
@@ -33,7 +34,8 @@ async def _parse_body_utf8(request: Request) -> GenerateRequest:
 @router.post("/generate")
 async def generate_project(req: GenerateRequest = Depends(_parse_body_utf8)):
     """同步生成：阻塞直到完成，返回完整状态（含 progress）"""
-    result = tool_run(
+    result = await asyncio.to_thread(
+        tool_run,
         "generate_project",
         topic=req.topic.strip(),
         async_mode=False,
@@ -51,7 +53,8 @@ async def generate_project(req: GenerateRequest = Depends(_parse_body_utf8)):
 @router.post("/generate/async")
 async def generate_project_async(req: GenerateRequest = Depends(_parse_body_utf8)):
     """异步生成：立即返回 task_id，后台线程执行，可通过 GET /api/progress/{task_id} 轮询进度"""
-    result = tool_run(
+    result = await asyncio.to_thread(
+        tool_run,
         "generate_project",
         topic=req.topic.strip(),
         async_mode=True,
@@ -64,19 +67,26 @@ async def generate_project_async(req: GenerateRequest = Depends(_parse_body_utf8
 
 
 @router.get("/progress/{task_id}")
-def get_progress(task_id: str):
+async def get_progress(task_id: str):
     """查询任务进度（用于异步生成），通过工具层"""
-    result = tool_run("get_progress", task_id=task_id)
+    result = await asyncio.to_thread(tool_run, "get_progress", task_id=task_id)
     if not result.ok:
         return None
     return result.data
 
 
 @router.get("/tasks")
-def list_tasks_api():
+async def list_tasks_api():
     """列出所有任务，供仪表盘使用"""
     from app.task_store import list_tasks
-    return {"tasks": list_tasks()}
+    return {"tasks": await asyncio.to_thread(list_tasks)}
+
+
+@router.get("/skills")
+def list_skills_api():
+    """列出 skills 目录下可用的 skills（ClawHub/Cursor 格式）"""
+    from app.skills import list_skills
+    return {"skills": list_skills()}
 
 
 @router.get("/health")

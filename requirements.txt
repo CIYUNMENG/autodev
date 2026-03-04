@@ -3,9 +3,18 @@ fastapi>=0.115.0
 uvicorn[standard]>=0.32.0
 pydantic>=2.10.0
 pydantic-settings>=2.6.0
-openai>=1.12.0
 python-dotenv>=1.0.0
 httpx>=0.27.0
+
+# LLM：LiteLLM 统一多模型接入，OpenAI SDK 保留作兼容
+litellm>=1.50.0
+openai>=1.12.0
+
+# LangChain：编排、记忆、RAG 等扩展能力
+langchain>=0.3.0
+langchain-openai>=0.2.0
+langchain-community>=0.3.0
+langchain-litellm>=0.1.0
 
 # 可选：MCP 服务（供 Cursor/Claude 等调用工具）
 mcp[cli]>=1.0.0

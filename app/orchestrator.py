@@ -54,17 +54,19 @@ class Orchestrator:
         topic: str,
         on_state_update: "Callable[[TaskState], None] | None" = None,
         requirement: RequirementOutput | None = None,
+        project_id: str | None = None,
     ) -> TaskState:
         """
         执行完整流程：需求分析 → 规划 → 代码生成
         on_state_update: 可选，状态更新时回调，用于异步进度推送
         requirement: 可选，已确认的需求（如从聊天传入），传入则跳过需求分析直接规划
+        project_id: 可选，指定项目 ID（与 task_id 一致），用于任务查询与输出目录命名
         返回最终任务状态
         """
         def _notify() -> None:
             if on_state_update:
                 on_state_update(state)
-        project_id = f"proj_{uuid.uuid4().hex[:12]}"
+        project_id = project_id or f"proj_{uuid.uuid4().hex[:12]}"
         state = TaskState(project_id=project_id, topic=topic)
         log_step(logger, "start", "任务开始", project_id=project_id, topic=topic[:50])
         logger.info("[%s] 创建项目目录并初始化 _stages", project_id)

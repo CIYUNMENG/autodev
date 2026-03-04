@@ -78,6 +78,15 @@ app.include_router(tool_router)
 # 可选：挂载 MCP 服务（需 pip install mcp[cli]），供 Cursor/Claude 等客户端调用
 # 若出现页面一直转圈，可暂时设为 False 排除 MCP 影响
 _enable_mcp = os.environ.get("AUTODEV_ENABLE_MCP", "1") == "1"
+# 加载 skills 目录下的技能（ClawHub/Cursor 格式）
+try:
+    from app.skills import load_skills
+    n = load_skills()
+    if n > 0:
+        logging.getLogger(__name__).info("已加载 %d 个 skill", n)
+except Exception as e:
+    logging.getLogger(__name__).debug("Skills 加载: %s", e)
+
 if _enable_mcp:
     try:
         from app.mcp_server import create_mcp_app

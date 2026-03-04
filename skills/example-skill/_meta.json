@@ -1,0 +1,7 @@
+{
+  "name": "example-skill",
+  "slug": "example-skill",
+  "description": "示例 skill，展示如何编写 SKILL.md 指令",
+  "summary": "示例 skill，展示如何编写 SKILL.md 指令",
+  "version": "1.0.0"
+}

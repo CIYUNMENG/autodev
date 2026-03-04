@@ -1,5 +1,6 @@
 """工具 API：统一暴露工具层，供前端/外部调用"""
 
+import asyncio
 import json
 
 from fastapi import APIRouter, Request
@@ -19,9 +20,9 @@ async def _parse_json_utf8(request: Request) -> dict:
 
 
 @router.get("")
-def tools_list():
+async def tools_list():
     """列出所有已注册工具（名称、描述、参数 schema）"""
-    return {"tools": list_tools()}
+    return {"tools": await asyncio.to_thread(list_tools)}
 
 
 @router.post("/generate_project")
@@ -36,7 +37,8 @@ async def api_generate_project(request: Request):
     requirement = data.get("requirement")
     async_mode = data.get("async_mode", True)
 
-    result = tool_run(
+    result = await asyncio.to_thread(
+        tool_run,
         "generate_project",
         topic=topic,
         session_id=session_id,
@@ -56,7 +58,7 @@ async def api_get_progress(request: Request):
     """
     data = await _parse_json_utf8(request)
     task_id = (data.get("task_id") or "").strip()
-    result = tool_run("get_progress", task_id=task_id)
+    result = await asyncio.to_thread(tool_run, "get_progress", task_id=task_id)
     if not result.ok:
         return {"ok": False, "error": result.error}
     return {"ok": True, "data": result.data}

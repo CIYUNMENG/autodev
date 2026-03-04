@@ -18,7 +18,7 @@ AutoDev Agent 是以 **AI 实时对话** 为核心的自主软件工程系统：
 | 语言 | Python 3.10+（兼容 3.13） |
 | Web 框架 | FastAPI |
 | 数据校验 | Pydantic v2 |
-| LLM 调用 | OpenAI API（兼容接口，支持豆包/火山引擎 Ark） |
+| LLM 调用 | LiteLLM（统一接入 OpenAI、豆包、100+ 模型）+ LangChain（编排、记忆、RAG） |
 | 可选 | MCP (Model Context Protocol)，供 Cursor/Claude 等调用 |
 
 ---
@@ -87,7 +87,9 @@ app/
 │   ├── main_agent.py    # RequirementPlanningToolAgent：需求分析 + 规划
 │   └── tool_agent.py    # CodegenToolAgent：按规划生成代码（非 MCP）
 ├── llm/
-│   └── client.py        # LLM 客户端（OpenAI / Doubao）
+│   └── client.py        # LLM 客户端（基于 LiteLLM）
+├── integrations/
+│   └── langchain_llm.py # LangChain ChatLiteLLM，供 chains、memory 等
 ├── schemas/             # Pydantic 模型
 │   ├── state.py         # TaskState、TaskPhase
 │   ├── requirement.py

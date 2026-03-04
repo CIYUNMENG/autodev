@@ -164,6 +164,20 @@
       background: var(--bg-refresh);
       color: var(--color-muted);
     }
+    .task-card.running {
+      border-left: 4px solid #3fb950;
+      box-shadow: 0 0 0 1px rgba(63, 185, 80, 0.3);
+    }
+    .task-card .current-step {
+      display: inline-block;
+      margin-top: 0.5rem;
+      padding: 0.35rem 0.65rem;
+      background: rgba(63, 185, 80, 0.15);
+      color: #3fb950;
+      border-radius: 6px;
+      font-size: 0.8125rem;
+      font-weight: 500;
+    }
     .task-card a {
       color: var(--color-accent);
       text-decoration: none;
@@ -254,9 +268,14 @@
       failed: { label: '失败', cls: 'failed' },
     };
 
+    function escapeHtml(s) {
+      const div = document.createElement('div');
+      div.textContent = s || '';
+      return div.innerHTML;
+    }
     function phaseLabel(phase) {
       const p = phaseMap[phase] || { label: phase || '-', cls: 'pending' };
-      return `<span class="phase ${p.cls}">${p.label}</span>`;
+      return `<span class="phase ${p.cls}">${escapeHtml(p.label)}</span>`;
     }
 
     function loadTasks() {
@@ -271,6 +290,8 @@
           tasksEl.innerHTML = tasks.map(t => {
             const p = phaseMap[t.phase] || { label: t.phase || '-', cls: 'pending' };
             const isDone = t.phase === 'completed' || t.phase === 'failed';
+            const isRunning = ['requirement_analysis', 'planning', 'code_generation'].includes(t.phase);
+            const runningClass = isRunning ? ' running' : '';
             const metaParts = [`任务 ID：${t.task_id}`, phaseLabel(t.phase)];
             if (t.progress && t.progress.completed_files != null && t.progress.total_files != null && !isDone) {
               metaParts.push(`文件 ${t.progress.completed_files}/${t.progress.total_files}`);
@@ -282,10 +303,15 @@
             if (t.output_path) {
               output = ` · <a href="file:///${t.output_path.replace(/\\/g, '/')}" target="_blank">打开输出目录</a>`;
             }
+            let currentStep = '';
+            if (isRunning && t.progress && t.progress.current_step) {
+              currentStep = `<div class="current-step">当前：${escapeHtml(t.progress.current_step)}</div>`;
+            }
             return `
-              <div class="task-card">
-                <h3>${t.topic ? t.topic.slice(0, 70) + (t.topic.length > 70 ? '...' : '') : '(无主题)'}</h3>
-                <div class="topic">${(t.topic || '').slice(0, 150)}</div>
+              <div class="task-card${runningClass}">
+                <h3>${escapeHtml(t.topic ? t.topic.slice(0, 70) + (t.topic.length > 70 ? '...' : '') : '(无主题)')}</h3>
+                <div class="topic">${escapeHtml((t.topic || '').slice(0, 150))}</div>
+                ${currentStep}
                 <div class="meta">${metaParts.join(' · ')}${output}</div>
               </div>
             `;

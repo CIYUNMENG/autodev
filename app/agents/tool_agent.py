@@ -5,7 +5,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Callable
 
-from app.agents.base import ToolAgentBase
+from app.agents.base import AgentCapabilities, ToolAgentBase
+from app.agents.reflection import reflect_on_error
 from app.framework_constraints import (
     FRAMEWORK_CONSTRAINTS,
     get_constraints_for_frameworks,
@@ -76,6 +77,17 @@ SINGLE_FILE_PROMPT = """你是一个专业的软件工程师。根据需求、�
 5. **接口契约**：若 classes 描述中明确要求定义信号（如 PyQt 的 button_clicked、action_triggered 等）或方法，必须在实现中完整定义并在相应事件发生时正确发射/调用，否则依赖本文件的其他文件将无法运行
 """
 
+REFLECT_RETRY_SUFFIX = """
+
+---
+## [反思重试] 上一次生成失败，请根据以下信息修正后重新生成
+
+**失败原因**: {error}
+
+**批评者建议**: {suggestion}
+
+请严格遵循上述建议，重新生成该文件的完整代码。只输出代码，不要解释。"""
+
 
 def _topological_levels(file_plans: list[FilePlan]) -> list[list[str]]:
     """按依赖关系分层，每层内可并行"""
@@ -96,10 +108,12 @@ def _topological_levels(file_plans: list[FilePlan]) -> list[list[str]]:
 
 class CodegenToolAgent(ToolAgentBase):
     """
-    代码生成工具 Agent：按 FilePlan 生成代码，支持并发。
+    代码生成工具 Agent：按 FilePlan 生成代码，支持并发与反思重试。
     供 Orchestrator 调用，内部组件，不是 MCP 工具。
     MCP 工具是 generate_project、get_progress，由 mcp_server 暴露。
     """
+
+    capabilities = AgentCapabilities(is_tool_agent=True, has_tools=True, has_reflection=True)
 
     def __init__(self, llm: LLMClient, fs_tool: FileSystemTool):
         super().__init__()
@@ -113,8 +127,9 @@ class CodegenToolAgent(ToolAgentBase):
         planning: PlanningOutput,
         existing_contents: dict[str, str],
         stages_dir: Path | None = None,
+        max_reflect_retries: int = 1,
     ) -> tuple[str, str]:
-        """生成单个文件，返回 (path, content)，失败则 raise"""
+        """生成单个文件，返回 (path, content)，失败则 raise。支持反思重试。"""
         context_parts = []
         for dep in fp.dependencies:
             if dep in existing_contents:
@@ -142,26 +157,49 @@ class CodegenToolAgent(ToolAgentBase):
             framework_constraints=framework_constraints,
         )
 
-        logger.info("CodegenToolAgent 生成文件: %s", fp.path)
-        raw = self.llm.chat(
-            messages=[{"role": "user", "content": prompt}],
-            response_format=None,
-            temperature=0.2,
-            max_tokens=8192,
-        )
-        if not raw or not isinstance(raw, str):
-            raw = str(raw or "")
-        content = raw.strip()
-        if content.startswith("```"):
-            lines = content.split("\n")
-            if lines[0].startswith("```"):
-                lines = lines[1:]
-            if lines and lines[-1].strip() == "```":
-                lines = lines[:-1]
-            content = "\n".join(lines)
-        if stages_dir:
-            save_codegen_stage(stages_dir, fp.path, prompt, content)
-        return fp.path, content
+        last_error: str | None = None
+        for attempt in range(max_reflect_retries + 1):
+            try:
+                current_prompt = prompt
+                if attempt > 0 and last_error:
+                    suggestion = reflect_on_error(
+                        self.llm,
+                        last_error,
+                        fp.path,
+                        context={"attempt": attempt, "prompt_len": len(prompt)},
+                    )
+                    current_prompt = prompt + "\n\n" + REFLECT_RETRY_SUFFIX.format(
+                        error=last_error,
+                        suggestion=suggestion or "（无具体建议）",
+                    )
+                    logger.info("CodegenToolAgent 反思重试 %s (第 %d 次)", fp.path, attempt + 1)
+
+                logger.info("CodegenToolAgent 生成文件: %s", fp.path)
+                raw = self.llm.chat(
+                    messages=[{"role": "user", "content": current_prompt}],
+                    response_format=None,
+                    temperature=0.2,
+                    max_tokens=8192,
+                )
+                if not raw or not isinstance(raw, str):
+                    raw = str(raw or "")
+                content = raw.strip()
+                if content.startswith("```"):
+                    lines = content.split("\n")
+                    if lines[0].startswith("```"):
+                        lines = lines[1:]
+                    if lines and lines[-1].strip() == "```":
+                        lines = lines[:-1]
+                    content = "\n".join(lines)
+                if stages_dir:
+                    save_codegen_stage(stages_dir, fp.path, current_prompt, content)
+                return fp.path, content
+            except Exception as e:
+                last_error = str(e)
+                logger.warning("生成失败 %s (attempt %d): %s", fp.path, attempt + 1, last_error)
+                if attempt >= max_reflect_retries:
+                    raise
+        raise RuntimeError(last_error or "生成失败")
 
     def generate_from_plan(
         self,

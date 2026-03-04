@@ -16,7 +16,7 @@ def _run_and_store(task_id: str, topic: str, requirement: dict | None = None) ->
             set_task(task_id, s)
 
         state = Orchestrator().run(
-            topic, on_state_update=on_update, requirement=requirement
+            topic, on_state_update=on_update, requirement=requirement, project_id=task_id
         )
         set_task(task_id, state)
     except Exception:

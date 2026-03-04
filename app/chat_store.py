@@ -1,4 +1,4 @@
-"""聊天会话存储 - 用于网页聊天式需求收集，支持 JSON 持久化"""
+"""聊天会话存储 - 用于网页聊天式需求收集，支持 JSON 持久化与数量限制、LRU 淘汰"""
 import json
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -93,6 +93,22 @@ _lock = Lock()
 _load()
 
 
+def _evict_if_needed() -> None:
+    """超出上限时，按 updated_at 淘汰最旧会话"""
+    from app.config import settings
+    max_sessions = getattr(settings, "chat_store_max_sessions", 200)
+    if len(_store) < max_sessions:
+        return
+    ordered = sorted(
+        _store.items(),
+        key=lambda x: (x[1].updated_at or datetime(1970, 1, 1)).timestamp(),
+    )
+    to_remove = len(_store) - max_sessions + 1
+    for i in range(to_remove):
+        if i < len(ordered):
+            del _store[ordered[i][0]]
+
+
 def persist_session(session_id: str) -> None:
     """将会话变更持久化到磁盘（在 append messages 后调用）"""
     with _lock:
@@ -107,6 +123,7 @@ def create_session() -> ChatSession:
     sid = f"chat_{uuid.uuid4().hex[:12]}"
     s = ChatSession(session_id=sid, updated_at=datetime.now())
     with _lock:
+        _evict_if_needed()
         _store[sid] = s
     _save()
     return s

@@ -1,4 +1,5 @@
 """聊天 API：AI 自主决策是否调用工具（confirm_requirement、get_progress），生成由用户点击卡片触发"""
+import asyncio
 import json
 from datetime import datetime
 
@@ -6,6 +7,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 
 from app.agent_tools import CHAT_TOOL_NAMES, run as tool_run, to_openai_tools
+from app.skills import get_all_instructions
 from app.chat_store import (
     ChatSession,
     ChatMessage,
@@ -21,15 +23,15 @@ router = APIRouter(prefix="/api/chat", tags=["chat"])
 
 
 @router.get("/sessions")
-def chat_list_sessions():
+async def chat_list_sessions():
     """列出所有聊天会话，按更新时间降序，供侧边栏展示"""
-    return {"sessions": list_sessions()}
+    return {"sessions": await asyncio.to_thread(list_sessions)}
 
 
 @router.get("/session/{session_id}")
-def chat_get_session(session_id: str):
+async def chat_get_session(session_id: str):
     """获取指定会话的完整内容（含消息），用于切换会话时加载"""
-    session = get_session(session_id)
+    session = await asyncio.to_thread(get_session, session_id)
     if not session:
         return {"error": "会话不存在或已过期"}
     return {
@@ -44,7 +46,7 @@ def _build_system_prompt() -> str:
     """聊天专用系统提示：AI 只调用 confirm_requirement 与 get_progress，不调用 generate_project"""
     tools = to_openai_tools(CHAT_TOOL_NAMES)
     tool_desc = ", ".join(t["function"]["name"] for t in tools)
-    return f"""你是一个友好的 AI 助手，可以自然对话，也可以帮用户完成项目生成等任务。
+    base = f"""你是一个友好的 AI 助手，可以自然对话，也可以帮用户完成项目生成等任务。
 你拥有工具（{tool_desc}），请根据用户意图自行判断是否调用。工具的具体名称、参数、说明由 API 提供。
 
 **重要：需求确认与生成分离**
@@ -55,6 +57,10 @@ def _build_system_prompt() -> str:
 
 当用户询问某任务的进度时，调用 get_progress，task_id 从对话中获取。
 若用户只是闲聊或提问，直接回复即可。"""
+    skills_instructions = get_all_instructions()
+    if skills_instructions:
+        base += "\n\n" + skills_instructions
+    return base
 
 
 def _build_topic_from_messages(messages: list[ChatMessage]) -> str:
@@ -135,20 +141,20 @@ async def chat_message(request: Request):
     if not message:
         return {"error": "message 不能为空"}
 
-    session: ChatSession | None = get_session(session_id) if session_id else None
+    session: ChatSession | None = await asyncio.to_thread(get_session, session_id) if session_id else None
     if not session:
-        session = create_session()
+        session = await asyncio.to_thread(create_session)
         session_id = session.session_id
 
     session.messages.append(ChatMessage(role="user", content=message))
     session.topic_full = _build_topic_from_messages(session.messages)
-    persist_session(session_id)
+    await asyncio.to_thread(persist_session, session_id)
 
     try:
         tools = to_openai_tools(CHAT_TOOL_NAMES)
-        reply, requirement_card = _run_tool_call_loop(session, session_id, tools)
+        reply, requirement_card = await asyncio.to_thread(_run_tool_call_loop, session, session_id, tools)
         session.messages.append(ChatMessage(role="assistant", content=reply))
-        persist_session(session_id)
+        await asyncio.to_thread(persist_session, session_id)
         out = {"session_id": session_id, "reply": reply}
         if requirement_card:
             out["requirement_card"] = requirement_card
@@ -170,26 +176,26 @@ def _sse_event(event: str, data: str | dict) -> str:
     return f"event: {event}\ndata: {data}\n\n"
 
 
-def _stream_message_gen(
+async def _stream_message_gen(
     message: str,
     session_id: str,
 ):
-    """流式消息生成器（同步）：AI 决策是否调用工具，完成后流式输出最终回复。
+    """流式消息生成器（异步）：AI 决策是否调用工具，完成后流式输出最终回复。
     当 confirm_requirement 成功时，额外发送 requirement_card 事件。"""
-    session: ChatSession | None = get_session(session_id) if session_id else None
+    session: ChatSession | None = await asyncio.to_thread(get_session, session_id) if session_id else None
     if not session:
-        session = create_session()
+        session = await asyncio.to_thread(create_session)
         session_id = session.session_id
 
     session.messages.append(ChatMessage(role="user", content=message))
     session.topic_full = _build_topic_from_messages(session.messages)
-    persist_session(session_id)
+    await asyncio.to_thread(persist_session, session_id)
 
     try:
         tools = to_openai_tools(CHAT_TOOL_NAMES)
-        reply, requirement_card = _run_tool_call_loop(session, session_id, tools)
+        reply, requirement_card = await asyncio.to_thread(_run_tool_call_loop, session, session_id, tools)
         session.messages.append(ChatMessage(role="assistant", content=reply))
-        persist_session(session_id)
+        await asyncio.to_thread(persist_session, session_id)
         # 流式输出：按字符或小块 yield 以模拟打字效果
         chunk_size = 2
         for i in range(0, len(reply), chunk_size):
@@ -240,7 +246,7 @@ async def chat_generate(request: Request):
     if not session_id:
         return {"error": "session_id 不能为空"}
 
-    session = get_session(session_id)
+    session = await asyncio.to_thread(get_session, session_id)
     if not session:
         return {"error": "会话不存在或已过期"}
 
@@ -248,7 +254,8 @@ async def chat_generate(request: Request):
     if not topic.strip():
         return {"error": "请先发送项目描述"}
 
-    result = tool_run(
+    result = await asyncio.to_thread(
+        tool_run,
         "generate_project",
         topic=topic.strip(),
         session_id=session_id,
@@ -267,10 +274,10 @@ async def chat_generate(request: Request):
 
 
 @router.get("/progress/{task_id}")
-def chat_get_progress(task_id: str):
+async def chat_get_progress(task_id: str):
     """查询生成进度（通过工具层 task_store）"""
     from app.agent_tools import run as tool_run
-    result = tool_run("get_progress", task_id=task_id)
+    result = await asyncio.to_thread(tool_run, "get_progress", task_id=task_id)
     if not result.ok:
         return {"error": result.error}
     return result.data
